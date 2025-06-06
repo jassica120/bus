@@ -25,11 +25,13 @@ const MENU = [
   { key: "eta", label: "公車預估到站時間" },
   { key: "timetable", label: "公車時刻表" },
   { key: "stop", label: "公車站點資訊" },
+  { key: "favorite", label: "最愛列表" },
 ];
 
 export default function Home() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [active, setActive] = useState("route");
+  // ...
 
   // 內容1：公車路線查詢
   const [routeNo, setRouteNo] = useState("");
@@ -42,6 +44,14 @@ export default function Home() {
   const [etaLoading, setEtaLoading] = useState(false);
   const [etaRoute, setEtaRoute] = useState("");
   const [etaRouteList, setEtaRouteList] = useState([]);
+
+  // 最愛列表
+  const [favRoutes, setFavRoutes] = useState([]);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setFavRoutes(JSON.parse(localStorage.getItem("favRoutes") || "[]"));
+    }
+  }, [menuOpen, routeNo]);
 
   // 內容3：時刻表
   const [timetableData, setTimetableData] = useState([]);
@@ -67,12 +77,12 @@ export default function Home() {
   };
 
   // 查詢公車路線即時資訊（用 RouteName 查詢）
-  const fetchRouteInfo = async (routeName) => {
+  const fetchRouteInfo = async (routeNo) => {
     setRouteLoading(true);
     setRouteInfo(null);
     try {
       const token = await getTDXToken();
-      const url = `https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/YunlinCounty/${encodeURIComponent(routeName)}?$format=JSON`;
+      const url = `https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/YunlinCounty/${encodeURIComponent(routeNo)}?$format=JSON`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -190,24 +200,103 @@ export default function Home() {
       </header>
       {/* 漢堡展開選單 */}
       {menuOpen && (
-        <nav className="flex flex-col gap-2 px-6 py-4 sm:hidden bg-cyan-700/90">
-          {MENU.map((item) => (
-            <button
-              key={item.key}
-              className={`px-4 py-2 rounded ${active === item.key ? "bg-white text-cyan-700 font-bold" : "hover:bg-cyan-600/60"} transition`}
-              onClick={() => {
-                setActive(item.key);
-                setMenuOpen(false);
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
+        <div>
+          <nav className="flex flex-col gap-2 px-6 py-4 sm:hidden bg-cyan-700/90">
+            {MENU.map((item) => (
+              <button
+                key={item.key}
+                className={`px-4 py-2 rounded ${active === item.key ? "bg-white text-cyan-700 font-bold" : "hover:bg-cyan-600/60"} transition`}
+                onClick={() => {
+                  setActive(item.key);
+                  setMenuOpen(false);
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="bg-white/90 text-cyan-900 rounded mt-4 p-3">
+            <div className="font-bold mb-2">最愛列表</div>
+            <ul>
+              {favRoutes.length > 0 ? (
+                favRoutes.map((fav, idx) => (
+                  <li key={fav + idx}>
+                    <button
+                      className="underline text-cyan-700 hover:text-cyan-900"
+                      onClick={() => {
+                        setActive("route");
+                        setRouteNo(fav);
+                        fetchRouteInfo(fav);
+                        setMenuOpen(false);
+                      }}
+                    >
+                      {fav}
+                    </button>
+                  </li>
+                ))
+              ) : (
+                <li className="text-gray-400">尚無最愛路線</li>
+              )}
+            </ul>
+          </div>
+        </div>
       )}
 
       {/* 主內容 */}
       <main className="max-w-2xl mx-auto mt-8 p-6 rounded-lg bg-white/80 text-cyan-900 shadow-lg">
+        {active === "favorite" && (
+          <section>
+            <h2 className={`text-xl font-bold mb-4 ${accentColor}`}>最愛列表</h2>
+            <table className="w-full text-sm bg-cyan-50/80 rounded shadow mb-4">
+              <thead>
+                <tr className="bg-cyan-200 text-cyan-900">
+                  <th className="px-2 py-1">路線</th>
+                  <th className="px-2 py-1 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {favRoutes.length > 0 ? (
+                  favRoutes.map((fav, idx) => (
+                    <tr key={fav + idx} className="border-b border-cyan-100">
+                      <td className="px-2 py-1">
+                        <button
+                          className="underline text-cyan-700 hover:text-cyan-900"
+                          onClick={() => {
+                            setActive("route");
+                            setRouteNo(fav);
+                            fetchRouteInfo(fav);
+                            setMenuOpen(false);
+                          }}
+                        >
+                          {fav}
+                        </button>
+                      </td>
+                      <td className="px-2 py-1 text-right w-24">
+                        <button
+                          className="text-red-500 hover:text-red-700 text-xs border border-red-200 rounded px-2 py-0.5"
+                          style={{ float: "right" }}
+                          onClick={() => {
+                            const newFavs = favRoutes.filter((r) => r !== fav);
+                            setFavRoutes(newFavs);
+                            localStorage.setItem("favRoutes", JSON.stringify(newFavs));
+                          }}
+                        >
+                          刪除
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="text-gray-400 px-2 py-1" colSpan={2}>
+                      尚無最愛路線
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </section>
+        )}
         {active === "route" && (
           <section>
             <h2 className={`text-xl font-bold mb-4 ${accentColor}`}>公車路線查詢</h2>
@@ -231,6 +320,24 @@ export default function Home() {
               >
                 查詢
               </button>
+              <button
+                className="bg-white text-cyan-700 border border-cyan-400 px-4 py-2 rounded hover:bg-cyan-100"
+                onClick={() => {
+                  if (routeNo) {
+                    const favs = JSON.parse(localStorage.getItem("favRoutes") || "[]");
+                    if (!favs.includes(routeNo)) {
+                      favs.push(routeNo);
+                      localStorage.setItem("favRoutes", JSON.stringify(favs));
+                      alert("已加入最愛！");
+                    } else {
+                      alert("此路線已在最愛！");
+                    }
+                  }
+                }}
+                disabled={!routeNo}
+              >
+                存入最愛
+              </button>
             </div>
             {routeLoading && <div>載入中...</div>}
             {routeInfo && (
@@ -238,16 +345,17 @@ export default function Home() {
                 {routeInfo.length === 0 ? (
                   <div>查無資料</div>
                 ) : (
-                  <ul className="space-y-2">
-                    {routeInfo.map((item, idx) => (
-                      <li key={idx} className="border-l-4 pl-2 border-cyan-400 bg-cyan-50/80 rounded">
-                        <div>路線：{item.RouteName?.Zh_tw || "無資料"}</div>
-                        <div>車牌：{item.PlateNumb || "無資料"}</div>
-                        <div>站點：{item.StopName?.Zh_tw || "無資料"}</div>
-                        <div>預估到站：{item.EstimateTime ? Math.round(item.EstimateTime / 60) + " 分" : "無資料"}</div>
-                      </li>
-                    ))}
-                  </ul>
+                  <div>
+                    <div className="mb-2 font-bold">
+                      路線：{routeNo || "無資料"}
+                    </div>
+                    <div className="mb-1">經過站：</div>
+                    <ul className="space-y-1 list-disc list-inside">
+                      {routeInfo[0]?.Stops?.map((stop, idx) => (
+                        <li key={idx}>{stop.StopName?.Zh_tw || "無資料"}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             )}
@@ -407,6 +515,16 @@ export default function Home() {
                 <li key={idx} className="border-l-4 pl-2 border-cyan-400 bg-cyan-50/80 rounded">
                   <div>站點名稱：{item.StopName?.Zh_tw || "無資料"}</div>
                   <div>站點ID：{item.StopUID || "無資料"}</div>
+                  {item.StopPosition?.PositionLat && item.StopPosition?.PositionLon && (
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${item.StopPosition.PositionLat},${item.StopPosition.PositionLon}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-cyan-700 underline ml-2"
+                    >
+                      Google地圖
+                    </a>
+                  )}
                 </li>
               ))}
             </ul>
