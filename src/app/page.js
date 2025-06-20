@@ -23,15 +23,47 @@ const borderColor = "border-cyan-400";
 const MENU = [
   { key: "route", label: "公車路線查詢" },
   { key: "eta", label: "公車預估到站時間" },
-  { key: "timetable", label: "公車時刻表" },
   { key: "stop", label: "公車站點資訊" },
   { key: "favorite", label: "最愛列表" },
+  { key: "plan", label: "計畫搭乘" },
 ];
 
 export default function Home() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [active, setActive] = useState("route");
-  // ...
+  // 計畫搭乘列表
+  const [plannedRoutes, setPlannedRoutes] = useState([]);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setPlannedRoutes(JSON.parse(localStorage.getItem("plannedRoutes") || "[]"));
+    }
+  }, [menuOpen]);
+  // 計畫搭乘路線的停靠站
+  const [planStops, setPlanStops] = useState({});
+  // 每個路線已鎖定的停靠站
+  const [lockedStops, setLockedStops] = useState({});
+  // 每個路線目前下拉選擇的站名
+  const [selectedStops, setSelectedStops] = useState({});
+  useEffect(() => {
+    async function fetchStopsForPlans() {
+      const stopsObj = {};
+      for (const route of plannedRoutes) {
+        try {
+          const token = await getTDXToken();
+          const url = `https://tdx.transportdata.tw/api/basic/v2/Bus/StopOfRoute/City/YunlinCounty/${encodeURIComponent(route)}?$format=JSON`;
+          const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+          const data = await res.json();
+          stopsObj[route] = Array.isArray(data) && data[0]?.Stops
+            ? data[0].Stops.map((s) => s.StopName?.Zh_tw || "無資料")
+            : [];
+        } catch {
+          stopsObj[route] = [];
+        }
+      }
+      setPlanStops(stopsObj);
+    }
+    if (plannedRoutes.length > 0) fetchStopsForPlans();
+  }, [plannedRoutes]);
 
   // 內容1：公車路線查詢
   const [routeNo, setRouteNo] = useState("");
@@ -44,6 +76,20 @@ export default function Home() {
   const [etaLoading, setEtaLoading] = useState(false);
   const [etaRoute, setEtaRoute] = useState("");
   const [etaRouteList, setEtaRouteList] = useState([]);
+  // 通知：等待公車即將到達
+  useEffect(() => {
+    Object.entries(lockedStops).forEach(([route, stop]) => {
+      const eta = etaData.find(
+        item =>
+          item.RouteName?.Zh_tw === route &&
+          item.StopName?.Zh_tw === stop &&
+          typeof item.EstimateTime === "number"
+      );
+      if (eta && eta.EstimateTime >= 0 && eta.EstimateTime < 60) {
+        alert("您等待公車即將到達");
+      }
+    });
+  }, [lockedStops, etaData]);
 
   // 最愛列表
   const [favRoutes, setFavRoutes] = useState([]);
@@ -52,10 +98,6 @@ export default function Home() {
       setFavRoutes(JSON.parse(localStorage.getItem("favRoutes") || "[]"));
     }
   }, [menuOpen, routeNo]);
-
-  // 內容3：時刻表
-  const [timetableData, setTimetableData] = useState([]);
-  const [timetableLoading, setTimetableLoading] = useState(false);
 
   // 內容4：站點資訊
   const [stopData, setStopData] = useState([]);
@@ -120,26 +162,18 @@ export default function Home() {
     setEtaLoading(false);
   };
 
-  // 時刻表（雲林縣）
-  const fetchTimetable = async () => {
-    setTimetableLoading(true);
-    try {
-      const token = await getTDXToken();
-      const res = await fetch(
-        "https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/YunlinCounty?%24top=30&%24format=JSON",
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      const data = await res.json();
-      setTimetableData(Array.isArray(data) ? data : []);
-    } catch {
-      setTimetableData([]);
-    }
-    setTimetableLoading(false);
-  };
-
   // 站點資訊（雲林縣）
+  // Debug: 印出 etaData 與 etaRouteList
+  useEffect(() => {
+    if (etaData.length > 0) {
+      console.log("etaData", etaData);
+    }
+  }, [etaData]);
+  useEffect(() => {
+    if (etaRouteList.length > 0) {
+      console.log("etaRouteList", etaRouteList);
+    }
+  }, [etaRouteList]);
   const fetchStop = async () => {
     setStopLoading(true);
     try {
@@ -161,10 +195,16 @@ export default function Home() {
   // 切換內容時自動載入資料
   useEffect(() => {
     if (active === "route") fetchRouteList();
-    if (active === "eta") fetchEta();
-    if (active === "timetable") fetchTimetable();
     if (active === "stop") fetchStop();
+    // eta 移除，改由下方全域定時刷新
   }, [active]);
+
+  // 預估到站時間全域定時刷新
+  useEffect(() => {
+    fetchEta(); // 初次載入
+    const interval = setInterval(fetchEta, 15000); // 每 15 秒自動刷新
+    return () => clearInterval(interval);
+  }, []);
 
   return (
     <div className={`min-h-screen ${mainColor} text-white`}>
@@ -220,18 +260,31 @@ export default function Home() {
             <ul>
               {favRoutes.length > 0 ? (
                 favRoutes.map((fav, idx) => (
-                  <li key={fav + idx}>
-                    <button
-                      className="underline text-cyan-700 hover:text-cyan-900"
-                      onClick={() => {
-                        setActive("route");
-                        setRouteNo(fav);
-                        fetchRouteInfo(fav);
-                        setMenuOpen(false);
-                      }}
-                    >
-                      {fav}
-                    </button>
+                  <li key={fav + idx} className="flex items-center justify-between">
+                    <span className="font-bold text-cyan-700">{fav}</span>
+                    <span className="flex gap-2">
+                      <button
+                        className="text-xs px-2 py-0.5 rounded border border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-100"
+                        onClick={() => {
+                          setActive("route");
+                          setRouteNo(fav);
+                          fetchRouteInfo(fav);
+                          setMenuOpen(false);
+                        }}
+                      >
+                        查詢路線
+                      </button>
+                      <button
+                        className="text-xs px-2 py-0.5 rounded border border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-100"
+                        onClick={() => {
+                          setActive("eta");
+                          setEtaRoute(fav);
+                          setMenuOpen(false);
+                        }}
+                      >
+                        預估到站
+                      </button>
+                    </span>
                   </li>
                 ))
               ) : (
@@ -239,10 +292,88 @@ export default function Home() {
               )}
             </ul>
           </div>
+          <div className="bg-white/90 text-cyan-900 rounded mt-4 p-3">
+            <div className="font-bold mb-2">計畫搭乘列表</div>
+            <table className="w-full text-sm bg-cyan-50/80 rounded shadow mb-2">
+              <thead>
+                <tr className="bg-cyan-200 text-cyan-900">
+                  <th className="px-2 py-1">路線</th>
+                  <th className="px-2 py-1">選項</th>
+                  <th className="px-2 py-1 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plannedRoutes.length > 0 ? (
+                  plannedRoutes.map((plan, idx) => (
+                    <tr key={plan + idx} className="border-b border-cyan-100">
+                      <td className="px-2 py-1 font-bold text-cyan-700">{plan}</td>
+                      <td className="px-2 py-1">
+                        {lockedStops[plan] ? (
+                          <span className="flex items-center gap-2 w-full">
+                            <span className="font-bold text-cyan-700">{lockedStops[plan]}</span>
+                            <span className="flex-1"></span>
+                            <button
+                              className="ml-auto text-xs px-2 py-0.5 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                              onClick={() => {
+                                const newLocked = { ...lockedStops };
+                                delete newLocked[plan];
+                                setLockedStops(newLocked);
+                              }}
+                            >
+                              取消
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <select
+                              className="border px-2 py-1 rounded text-cyan-900 border-cyan-400"
+                              value={selectedStops[plan] || ""}
+                              onChange={e => setSelectedStops({ ...selectedStops, [plan]: e.target.value })}
+                            >
+                              <option value="">請選擇</option>
+                              {(planStops[plan] || []).map((stop, i) => (
+                                <option key={stop + i} value={stop}>{stop}</option>
+                              ))}
+                            </select>
+                            <button
+                              className="text-xs px-2 py-0.5 rounded border border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-100"
+                              disabled={!selectedStops[plan]}
+                              onClick={() => {
+                                setLockedStops({ ...lockedStops, [plan]: selectedStops[plan] });
+                              }}
+                            >
+                              確定
+                            </button>
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-right w-24">
+                        <button
+                          className="text-red-500 hover:text-red-700 text-xs border border-red-200 rounded px-2 py-0.5"
+                          style={{ float: "right" }}
+                          onClick={() => {
+                            const newPlans = plannedRoutes.filter((r) => r !== plan);
+                            setPlannedRoutes(newPlans);
+                            localStorage.setItem("plannedRoutes", JSON.stringify(newPlans));
+                          }}
+                        >
+                          刪除
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="text-gray-400 px-2 py-1" colSpan={2}>
+                      尚無計畫搭乘路線
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
-
-      {/* 主內容 */}
       <main className="max-w-2xl mx-auto mt-8 p-6 rounded-lg bg-white/80 text-cyan-900 shadow-lg">
         {active === "favorite" && (
           <section>
@@ -259,17 +390,32 @@ export default function Home() {
                   favRoutes.map((fav, idx) => (
                     <tr key={fav + idx} className="border-b border-cyan-100">
                       <td className="px-2 py-1">
-                        <button
-                          className="underline text-cyan-700 hover:text-cyan-900"
-                          onClick={() => {
-                            setActive("route");
-                            setRouteNo(fav);
-                            fetchRouteInfo(fav);
-                            setMenuOpen(false);
-                          }}
-                        >
-                          {fav}
-                        </button>
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-cyan-700">{fav}</span>
+                          <span className="flex gap-2">
+                            <button
+                              className="text-xs px-2 py-0.5 rounded border border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-100"
+                              onClick={() => {
+                                setActive("route");
+                                setRouteNo(fav);
+                                fetchRouteInfo(fav);
+                                setMenuOpen(false);
+                              }}
+                            >
+                              查詢路線
+                            </button>
+                            <button
+                              className="text-xs px-2 py-0.5 rounded border border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-100"
+                              onClick={() => {
+                                setActive("eta");
+                                setEtaRoute(fav);
+                                setMenuOpen(false);
+                              }}
+                            >
+                              預估到站
+                            </button>
+                          </span>
+                        </div>
                       </td>
                       <td className="px-2 py-1 text-right w-24">
                         <button
@@ -338,6 +484,25 @@ export default function Home() {
               >
                 存入最愛
               </button>
+              <button
+                className="bg-white text-cyan-700 border border-cyan-400 px-4 py-2 rounded hover:bg-cyan-100"
+                onClick={() => {
+                  if (routeNo) {
+                    const plans = JSON.parse(localStorage.getItem("plannedRoutes") || "[]");
+                    if (!plans.includes(routeNo)) {
+                      plans.push(routeNo);
+                      localStorage.setItem("plannedRoutes", JSON.stringify(plans));
+                      setPlannedRoutes(plans);
+                      alert("已加入計畫！");
+                    } else {
+                      alert("此路線已在計畫！");
+                    }
+                  }
+                }}
+                disabled={!routeNo}
+              >
+                存入計畫
+              </button>
             </div>
             {routeLoading && <div>載入中...</div>}
             {routeInfo && (
@@ -384,6 +549,43 @@ export default function Home() {
                 disabled={etaLoading}
               >
                 重新整理
+              </button>
+              <button
+                className="bg-white text-cyan-700 border border-cyan-400 px-4 py-2 rounded hover:bg-cyan-100"
+                onClick={() => {
+                  if (etaRoute) {
+                    const favs = JSON.parse(localStorage.getItem("favRoutes") || "[]");
+                    if (!favs.includes(etaRoute)) {
+                      favs.push(etaRoute);
+                      localStorage.setItem("favRoutes", JSON.stringify(favs));
+                      alert("已加入最愛！");
+                    } else {
+                      alert("此路線已在最愛！");
+                    }
+                  }
+                }}
+                disabled={!etaRoute}
+              >
+                存入最愛
+              </button>
+              <button
+                className="bg-white text-cyan-700 border border-cyan-400 px-4 py-2 rounded hover:bg-cyan-100"
+                onClick={() => {
+                  if (etaRoute) {
+                    const plans = JSON.parse(localStorage.getItem("plannedRoutes") || "[]");
+                    if (!plans.includes(etaRoute)) {
+                      plans.push(etaRoute);
+                      localStorage.setItem("plannedRoutes", JSON.stringify(plans));
+                      setPlannedRoutes(plans);
+                      alert("已加入計畫！");
+                    } else {
+                      alert("此路線已在計畫！");
+                    }
+                  }
+                }}
+                disabled={!etaRoute}
+              >
+                存入計畫
               </button>
             </div>
             {etaLoading && <div>載入中...</div>}
@@ -453,49 +655,24 @@ export default function Home() {
                   item.PlateNumb !== "-1" &&
                   item.PlateNumb !== -1
               ).length === 0 &&
-              !etaLoading && <div>查無資料</div>}
-            {etaRoute &&
-              etaData.filter(
-                (item) =>
-                  item.RouteName?.Zh_tw === etaRoute &&
-                  item.PlateNumb !== "-1" &&
-                  item.PlateNumb !== -1
-              ).length > 0 &&
-              etaData
-                .filter(
+              !etaLoading &&
+              (
+                etaData.filter(
                   (item) =>
                     item.RouteName?.Zh_tw === etaRoute &&
                     item.PlateNumb !== "-1" &&
                     item.PlateNumb !== -1
-                )
-                .every((item) => item.EstimateTime === -1) && (
-                <div className="text-red-600 font-bold mt-2">本日末班車已過</div>
-              )}
-          </section>
-        )}
-
-        {active === "timetable" && (
-          <section>
-            <h2 className={`text-xl font-bold mb-4 ${accentColor}`}>公車時刻表</h2>
-            <button
-              className="mb-4 bg-cyan-600 hover:bg-cyan-700 text-white px-4 py-2 rounded"
-              onClick={fetchTimetable}
-              disabled={timetableLoading}
-            >
-              重新整理
-            </button>
-            {timetableLoading && <div>載入中...</div>}
-            <ul className="space-y-2">
-              {timetableData.map((item, idx) => (
-                <li key={idx} className="border-l-4 pl-2 border-cyan-400 bg-cyan-50/80 rounded">
-                  <div>路線：{item.RouteName?.Zh_tw || "無資料"}</div>
-                  <div>車牌：{item.PlateNumb || "無資料"}</div>
-                  <div>站點：{item.StopName?.Zh_tw || "無資料"}</div>
-                  <div>預估到站：{item.EstimateTime ? Math.round(item.EstimateTime / 60) + " 分" : "無資料"}</div>
-                </li>
-              ))}
-            </ul>
-            {timetableData.length === 0 && !timetableLoading && <div>查無資料</div>}
+                ).every((item) => item.EstimateTime === -1) &&
+                etaData.filter(
+                  (item) =>
+                    item.RouteName?.Zh_tw === etaRoute &&
+                    item.PlateNumb !== "-1" &&
+                    item.PlateNumb !== -1
+                ).length > 0
+                  ? <div className="text-red-600 font-bold mt-2">本日末班車已離開</div>
+                  : <div>查無資料</div>
+              )
+            }
           </section>
         )}
 
@@ -531,6 +708,88 @@ export default function Home() {
             {stopData.length === 0 && !stopLoading && <div>查無資料</div>}
           </section>
         )}
+        {active === "plan" && (
+          <section className="max-w-2xl mx-auto mt-8 p-6 rounded-lg bg-white/80 text-cyan-900 shadow-lg">
+            <h2 className={`text-xl font-bold mb-4 ${accentColor}`}>計畫搭乘列表</h2>
+            <table className="w-full text-sm bg-cyan-50/80 rounded shadow mb-4">
+              <thead>
+                <tr className="bg-cyan-200 text-cyan-900">
+                  <th className="px-2 py-1">路線</th>
+                  <th className="px-2 py-1">選項</th>
+                  <th className="px-2 py-1 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plannedRoutes.length > 0 ? (
+                  plannedRoutes.map((plan, idx) => (
+                    <tr key={plan + idx} className="border-b border-cyan-100">
+                      <td className="px-2 py-1 font-bold text-cyan-700">{plan}</td>
+                      <td className="px-2 py-1">
+                        {lockedStops[plan] ? (
+                          <span className="flex items-center gap-2 w-full">
+                            <span className="font-bold text-cyan-700">{lockedStops[plan]}</span>
+                            <span className="flex-1"></span>
+                            <button
+                              className="ml-auto text-xs px-2 py-0.5 rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                              onClick={() => {
+                                const newLocked = { ...lockedStops };
+                                delete newLocked[plan];
+                                setLockedStops(newLocked);
+                              }}
+                            >
+                              取消
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-2">
+                            <select
+                              className="border px-2 py-1 rounded text-cyan-900 border-cyan-400"
+                              value={selectedStops[plan] || ""}
+                              onChange={e => setSelectedStops({ ...selectedStops, [plan]: e.target.value })}
+                            >
+                              <option value="">請選擇</option>
+                              {(planStops[plan] || []).map((stop, i) => (
+                                <option key={stop + i} value={stop}>{stop}</option>
+                              ))}
+                            </select>
+                            <button
+                              className="text-xs px-2 py-0.5 rounded border border-cyan-400 bg-white text-cyan-700 hover:bg-cyan-100"
+                              disabled={!selectedStops[plan]}
+                              onClick={() => {
+                                setLockedStops({ ...lockedStops, [plan]: selectedStops[plan] });
+                              }}
+                            >
+                              確定
+                            </button>
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1 text-right w-24">
+                        <button
+                          className="text-red-500 hover:text-red-700 text-xs border border-red-200 rounded px-2 py-0.5"
+                          style={{ float: "right" }}
+                          onClick={() => {
+                            const newPlans = plannedRoutes.filter((r) => r !== plan);
+                            setPlannedRoutes(newPlans);
+                            localStorage.setItem("plannedRoutes", JSON.stringify(newPlans));
+                          }}
+                        >
+                          刪除
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="text-gray-400 px-2 py-1" colSpan={2}>
+                      尚無計畫搭乘路線
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </section>
+        )}
       </main>
       <footer className="text-center text-cyan-100 py-6 mt-10">
         © {new Date().getFullYear()} 雲林斗六公車路線查詢系統
@@ -538,21 +797,22 @@ export default function Home() {
     </div>
   );
 }
-/*
-修改內容
-標題:雲林斗六公車路線
-描述:雲林斗六公車路線查詢系統，提供即時公車到站資訊、路線查詢、時刻表等功能，方便民眾出行。
-漢堡:放入內容一到四
-內容1(公車路線查詢):可輸入公車路線號碼的輸入框，並在下方顯示對應的公車路線資訊。使用者可以透過輸入框查詢特定的公車路線，並獲得相關的站點和時間表資訊。
-7011 API:https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/YilanCounty/7011?%24top=30&%24format=JSON
-201 API:https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/YilanCounty/201?%24top=30&%24format=JSON
-101 API:https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/YilanCounty/101?%24top=30&%24format=JSON
-內容2(公車預估到站時間):顯示選定公車路線的預估到站時間，並提供即時更新。使用者可以查看所選公車路線的預估到站時間，方便安排出行計劃。
-API:https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/YunlinCounty?%24top=30&%24format=JSON
-內容3(公車時刻表):提供公車路線的時刻表資訊，使用者可以查看各站點的發車時間。這有助於使用者了解公車的運行時間，便於計劃出行。
-API:https://tdx.transportdata.tw/api/basic/v2/Bus/RealTimeByFrequency/City/YunlinCounty?%24top=30&%24format=JSON
-內容4(公車站點資訊):顯示公車站點的詳細資訊，包括站點名稱、位置和相關服務。使用者可以查看各個公車站點的詳細資訊，方便找到所需的站點。
-API:https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/City/YunlinCounty?%24top=30&%24format=JSON
 
-幫我網頁色系訂為藍綠色
-*/
+// 路線 101 預估到站時間查詢（for debug/console）
+function fetchBus101ETA() {
+  fetch('https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/Yunlin/101')
+    .then(res => res.json())
+    .then(data => {
+      console.log('路線 101');
+      data.forEach(item => {
+        const name = item.StopName?.Zh_tw || '-';
+        if (item.EstimateTime == null || item.StopStatus !== 0) {
+          console.log(`${name}：未發車`);
+        } else {
+          const min = Math.round(item.EstimateTime / 60) || 1;
+          console.log(`${name}：${min}分鐘`);
+        }
+      });
+    });
+}
+// 可在瀏覽器 console 執行 fetchBus101ETA()
