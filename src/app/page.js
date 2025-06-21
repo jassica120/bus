@@ -670,7 +670,7 @@ export default function Home() {
                     item.PlateNumb !== -1
                 ).length > 0
                   ? <div className="text-red-600 font-bold mt-2">本日末班車已離開</div>
-                  : <div>查無資料</div>
+                  : <div>查無資料(今日末班車已過)</div>
               )
             }
           </section>
@@ -715,7 +715,7 @@ export default function Home() {
               <thead>
                 <tr className="bg-cyan-200 text-cyan-900">
                   <th className="px-2 py-1">路線</th>
-                  <th className="px-2 py-1">選項</th>
+                  <th className="px-2 py-1">您的(上車或下車)車站</th>
                   <th className="px-2 py-1 text-right">操作</th>
                 </tr>
               </thead>
@@ -724,9 +724,9 @@ export default function Home() {
                   plannedRoutes.map((plan, idx) => (
                     <tr key={plan + idx} className="border-b border-cyan-100">
                       <td className="px-2 py-1 font-bold text-cyan-700">{plan}</td>
-                      <td className="px-2 py-1">
+                      <td className="px-2 py-1 text-center">
                         {lockedStops[plan] ? (
-                          <span className="flex items-center gap-2 w-full">
+                          <span className="flex items-center gap-2 w-full justify-center">
                             <span className="font-bold text-cyan-700">{lockedStops[plan]}</span>
                             <span className="flex-1"></span>
                             <button
@@ -741,9 +741,9 @@ export default function Home() {
                             </button>
                           </span>
                         ) : (
-                          <span className="flex items-center gap-2">
+                          <span className="flex items-center gap-2 justify-center">
                             <select
-                              className="border px-2 py-1 rounded text-cyan-900 border-cyan-400"
+                              className="border px-2 py-1 rounded text-cyan-900 border-cyan-400 mx-auto block"
                               value={selectedStops[plan] || ""}
                               onChange={e => setSelectedStops({ ...selectedStops, [plan]: e.target.value })}
                             >
